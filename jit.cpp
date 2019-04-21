@@ -2,10 +2,14 @@
 #include <cstring>
 #include <sys/mman.h>
 
-const size_t funcSize = 55;
-const uint64_t initialPos = 7;
-const uint64_t deducePos = 14;
-const uint8_t func[] = {
+using std::memcpy;
+
+const size_t FUNC_SIZE = 55;
+const size_t OPERAND_SIZE = 4;
+const uint64_t INITIAL = 7;
+const uint64_t DEDUCE = 14;
+const int RANGE = 1000;
+const uint8_t FUNC[] = {
     0x55,                                     //push   %rbp
     0x48, 0x89, 0xe5,             	          //mov    %rsp,%rbp
     0xc7, 0x45, 0xf8, 0x2a, 0x00, 0x00, 0x00, //movl   $0x2a,-0x8(%rbp)
@@ -25,22 +29,56 @@ const uint8_t func[] = {
     0xc3                   	                  //retq   
 };
 
-int main() {
-    const int range = 1000;
+void finish() {
+    perror("");
+    exit(EXIT_FAILURE);
+}
+
+uint64_t getRandom() {
     srand(time(0));
-    int numberToDeduce = rand() % range + 1;
-    void *addr = mmap(NULL, funcSize, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    std::memcpy(addr, func, funcSize);
+    return rand() % RANGE + 1;
+}
+
+void* init() {
+    void *addr = mmap(NULL, FUNC_SIZE, PROT_READ | PROT_EXEC | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (addr == (void*) -1) {
+        finish();
+    }
+    memcpy(reinterpret_cast<uint8_t*>(addr), FUNC, FUNC_SIZE);
+    return addr;
+}
+
+void setOperand(void* addr, uint64_t op, size_t pos) {
+    if (mprotect(addr, FUNC_SIZE, PROT_WRITE) == -1) {
+        finish();
+    }
+    memcpy(reinterpret_cast<uint8_t*>(addr) + pos, &op, OPERAND_SIZE);
+    if (mprotect(addr, FUNC_SIZE, PROT_READ | PROT_EXEC) == -1) {
+        finish();
+    }
+}
+
+int main() {
+    uint64_t numberToDeduce = getRandom();
+    void* addr = init();
+
+    setOperand(addr, numberToDeduce, INITIAL);
+
     int (*fcnPtr)() = reinterpret_cast<int(*)()>(addr);
-    std::memcpy(addr + initialPos, &numberToDeduce, 4);
+
+    printf("Try to guess my number\nIt is in range [1;1000]\nPrint '0' to exit\n");
     while (true) {
         uint64_t a;
         std::cin >> a;
-        if (a > range || a < 1) {
+        if (a == 0) {
+            printf("My number was: %d\n", numberToDeduce);
+            break;
+        }
+        if (a > RANGE || a < 1) {
             printf("Too big number\n");
             continue;
         }
-        std::memcpy(addr + deducePos, &a, 4);
+        setOperand(addr, a, DEDUCE);
         int result = fcnPtr();
         if (result == 1) {
             printf("Smaller then mine\n");
@@ -51,4 +89,8 @@ int main() {
             break;
         }
     }
+    if (munmap(addr, FUNC_SIZE) == -1) {
+        finish();
+    }
+    exit(EXIT_SUCCESS);
 }
